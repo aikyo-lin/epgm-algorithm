@@ -64,55 +64,76 @@ class EventQuantizer:
 
     def quantize(self, observation: np.ndarray, bumper_hit: bool = False) -> Tuple[int, np.ndarray]:
         """
-        [ZH] 将当前连续观测映射为离散事件基元 ID。
-        [EN] Quantize current continuous observation into a discrete event primitive ID.
+        [ZH] 将当前连续观测映射为离散事件基元 ID (严格对齐端侧 C 固件量化接口契约)。
+        [EN] Quantize current continuous observation into a discrete event primitive ID (aligned with C firmware).
+
+        数学原理与接口契约 / Mathematical Background & Interface Contract:
+            1. 碰撞优先级: 物理微动开关 bumper_hit 为硬件真值，触发时事件 ID 强制归 0；
+            2. 空间三等分离散分箱 (Spatial Bins):
+               - 危险区间 (Bin 0): s < 1/3 (约 0.3333, C 端对应 d < 333mm)
+               - 接近区间 (Bin 1): 1/3 <= s < 2/3 (约 0.3333 ~ 0.6667, C 端对应 333mm <= d < 667mm)
+               - 安全区间 (Bin 2): s >= 2/3 (约 0.6667, C 端对应 d >= 667mm)
+            3. 紧凑四象限空间哈希 (Compact Sector Encoding):
+               - 前方 (Front): min(Ray 0, Ray 1, Ray 7)
+               - 右方 (Right): min(Ray 1, Ray 2, Ray 3)
+               - 后方 (Back):  min(Ray 3, Ray 4, Ray 5)
+               - 左方 (Left):  min(Ray 5, Ray 6, Ray 7)
+               - 静态空间事件 ID: 1 + (Front * 27 + Right * 9 + Back * 3 + Left) in [1, 81]
+            4. 差分动态脉冲判定 (Dynamic Transition Pulse):
+               - 判定条件: ||Delta s||_2 > delta_threshold (当阈值为 0.25 时，即 sum(Delta s_i^2) > 0.0625)
+               - C 端定点等价条件: sum((d_{t,i} - d_{t-1,i})^2) > 62,500 (250^2)
+               - 动态事件 ID: 静态空间事件 ID + 100 in [101, 181]
 
         Args:
             observation (np.ndarray): 连续传感器向量，形状为 (num_sensors,)，取值 [0, max_range]。
                                      Continuous sensor vector of shape (num_sensors,), values in [0, max_range].
             bumper_hit (bool): 物理微动碰撞开关状态 (True 表示撞击，为绝对高优先级突发事件)。
-                              Physical microswitch bumper state (True indicates collision, highest priority).
+                               Physical microswitch bumper state (True indicates collision, highest priority).
 
         Returns:
-            Tuple[int, np.ndarray]: (离散事件 ID, 特征向量原型) / (discrete event ID, prototype feature vector)
+            Tuple[int, np.ndarray]: (离散事件 ID [0: 碰撞, 1~81: 静态事件, 101~181: 动态事件], 特征向量原型)
         """
-        obs = np.clip(observation, 0.0, self.max_range)
+        obs = np.clip(observation, 0.0, self.max_range).astype(np.float32)
 
-        # [ZH] 1. 物理撞击事件（优先级最高，专属事件 ID 0）
-        # [EN] 1. Physical collision event (highest priority, reserved event ID 0)
+        # [ZH] 1. 物理微动开关撞击事件（优先级最高，专属事件 ID 0）
+        # [EN] 1. Physical collision microswitch event (highest priority, reserved event ID 0)
         if bumper_hit:
-            self.last_observation = obs
+            self.last_observation = obs.copy()
             return 0, obs
 
-        # [ZH] 2. 空间局部感受野分箱 (Spatial Receptive Field Binning)
-        # 将连续距离划分为: 0: 危险(<0.33), 1: 接近(0.33~0.66), 2: 安全(>0.66)
-        # Discretize continuous distance into: 0: Danger (<0.33), 1: Near (0.33-0.66), 2: Safe (>0.66)
-        bin_edges = np.linspace(0.0, self.max_range, self.distance_bins + 1)[1:-1]
+        # [ZH] 2. 空间局部感受野分箱 (三等分边界: 1/3 与 2/3)
+        # [EN] 2. Spatial receptive field binning (tercile boundaries: 1/3 and 2/3)
+        if self.distance_bins == 3:
+            bin_edges = np.array([self.max_range / 3.0, 2.0 * self.max_range / 3.0], dtype=np.float32)
+        else:
+            bin_edges = np.linspace(0.0, self.max_range, self.distance_bins + 1)[1:-1]
+
         digitized = np.digitize(obs, bin_edges)  # 每个传感器取值 0, 1, 2
 
-        # [ZH] 3. 计算显著区域聚合摘要 (Compact Sector Encoding)
-        # 为防止 3^8 = 6561 导致稀疏图爆炸，将 8 方向聚合为 4 个主要象限 (前、后、左、右)
-        # To prevent 3^8 = 6561 state explosion on microcontrollers, aggregate 8 rays into 4 sectors (F, B, L, R)
-        # 前方: Ray 0, 1, 7; 右方: Ray 1, 2, 3; 后方: Ray 3, 4, 5; 左方: Ray 5, 6, 7
-        front = min(digitized[0], digitized[1], digitized[7])
-        right = min(digitized[1], digitized[2], digitized[3])
-        back = min(digitized[3], digitized[4], digitized[5])
-        left = min(digitized[5], digitized[6], digitized[7])
+        # [ZH] 3. 四象限显著区域聚合 (前、右、后、左)
+        # [EN] 3. Four-sector aggregation (Front, Right, Back, Left)
+        front = int(min(digitized[0], digitized[1], digitized[7]))
+        right = int(min(digitized[1], digitized[2], digitized[3]))
+        back  = int(min(digitized[3], digitized[4], digitized[5]))
+        left  = int(min(digitized[5], digitized[6], digitized[7]))
 
-        # [ZH] 4. 计算哈希事件 ID (取值范围 1 ~ 3^4 = 81)
-        # [EN] 4. Compute hashed event ID (range 1 ~ 3^4 = 81)
+        # [ZH] 4. 计算静态空间事件 ID (取值区间 1 ~ 81)
+        # [EN] 4. Compute static spatial event ID (range 1 ~ 81)
         spatial_event_id = 1 + (front * 27 + right * 9 + back * 3 + left)
 
-        # [ZH] 5. 动态脉冲检测 (Dynamic Transition Pulse)
-        # 若距离变化率急剧超过阈值，打上高位标志 (增加 100 偏置区分动态运动状态)
-        # If rate of change exceeds threshold, tag with dynamic bit offset (+100)
+        # [ZH] 5. 差分动态脉冲检测 (Dynamic Transition Pulse)
+        # 判定欧式距离变化量 ||Delta s||_2 > delta_threshold, 等价于 sum(Delta s_i^2) > delta_threshold^2
         is_dynamic = False
         if self.last_observation is not None:
-            delta = np.linalg.norm(obs - self.last_observation)
-            if delta > self.delta_threshold:
+            diff = obs - self.last_observation
+            sum_sq = float(np.sum(diff * diff))
+            thresh_sq = float(self.delta_threshold * self.delta_threshold)
+            # 考虑微小浮点误差，严格判定大于门限
+            if sum_sq > thresh_sq:
                 is_dynamic = True
 
-        self.last_observation = obs
+        self.last_observation = obs.copy()
 
+        # 动态事件偏移 100 偏置，区间映射为 101 ~ 181
         final_event_id = spatial_event_id + (100 if is_dynamic else 0)
         return final_event_id, obs

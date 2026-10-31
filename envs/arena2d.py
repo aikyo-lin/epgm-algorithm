@@ -82,16 +82,40 @@ class Arena2DEnv(gym.Env):
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
-        [ZH] 重置环境至初始状态。
-        [EN] Reset environment to initial state.
+        [ZH] 重置环境至初始状态，严格支持受控随机种子以消除测试方差。
+        [EN] Reset environment to initial state, strictly supporting controlled random seeds to eliminate variance.
+
+        架构设计与确定性保障 / Architecture Intent & Determinism:
+            1. 基类 super().reset(seed=seed) 会初始化 Gymnasium 独立的伪随机数生成器 (self.np_random)；
+            2. 彻底移除全局静态 np.random 调用，使用环境私有 self.np_random 生成初始位置与朝向；
+            3. 支持通过 options 参数显式指定初始位置 ("init_pos") 与朝向角 ("init_theta")，方便基准评测与极端几何用例；
+            4. 配合全确定性的运动学 step() 与解析光线投射，确保相同 seed 下整条状态与回报轨迹方差严格为 0。
+
+        Args:
+            seed (Optional[int]): 伪随机数发生器种子，若传入固定整数则完全复现初始位姿。
+            options (Optional[Dict[str, Any]]): 扩展配置字典，支持:
+                - "init_pos": List[float] 或 np.ndarray，小车初始坐标 [x, y]；
+                - "init_theta": float，小车初始朝向角 (弧度)。
+
+        Returns:
+            Tuple[np.ndarray, Dict[str, Any]]: (初始归一化观测向量 [8维], 状态附加信息字典)。
         """
         super().reset(seed=seed)
         self.current_step = 0
 
-        # [ZH] 随机放置小车在左下角安全启动区域
-        # [EN] Randomly place robot in bottom-left safe start zone
-        self.robot_pos = np.array([1.2 + np.random.uniform(-0.3, 0.3), 1.2 + np.random.uniform(-0.3, 0.3)], dtype=np.float32)
-        self.robot_theta = float(np.random.uniform(0.0, 2.0 * np.pi))
+        # [ZH] 初始位姿设定: 优先读取 options 显式配置；若无配置则通过受控随机流 self.np_random 在安全区域采样
+        # [EN] Initial pose: preferentially use options config; otherwise sample from safe zone via self.np_random
+        if options is not None and "init_pos" in options:
+            self.robot_pos = np.array(options["init_pos"], dtype=np.float32)
+        else:
+            pos_x = 1.2 + float(self.np_random.uniform(-0.3, 0.3))
+            pos_y = 1.2 + float(self.np_random.uniform(-0.3, 0.3))
+            self.robot_pos = np.array([pos_x, pos_y], dtype=np.float32)
+
+        if options is not None and "init_theta" in options:
+            self.robot_theta = float(options["init_theta"])
+        else:
+            self.robot_theta = float(self.np_random.uniform(0.0, 2.0 * np.pi))
 
         obs, bumper = self._get_observation()
         info = {
