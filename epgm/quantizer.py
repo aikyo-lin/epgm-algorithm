@@ -93,7 +93,10 @@ class EventQuantizer:
         Returns:
             Tuple[int, np.ndarray]: (离散事件 ID [0: 碰撞, 1~81: 静态事件, 101~181: 动态事件], 特征向量原型)
         """
-        obs = np.clip(observation, 0.0, self.max_range).astype(np.float32)
+        # [ZH] 输入数值清洗与 NaN/Inf 防御：消除传感器故障带来的非法浮点数，防止污染有状态历史帧 (防范 CH-05 漏洞)
+        # [EN] Input sanitization: clean NaN/Inf sensor values to prevent poisoning stateful history
+        clean_obs = np.nan_to_num(observation, nan=0.0, posinf=self.max_range, neginf=0.0)
+        obs = np.clip(clean_obs, 0.0, self.max_range).astype(np.float32)
 
         # [ZH] 1. 物理微动开关撞击事件（优先级最高，专属事件 ID 0）
         # [EN] 1. Physical collision microswitch event (highest priority, reserved event ID 0)
