@@ -1,0 +1,182 @@
+[
+  {
+    "episode": 1,
+    "reward": -13.959999999999987,
+    "steps": 200,
+    "collisions": 2,
+    "nodes": 21,
+    "edges": 63,
+    "goal_reached": false
+  },
+  {
+    "episode": 2,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 28,
+    "edges": 124,
+    "goal_reached": false
+  },
+  {
+    "episode": 3,
+    "reward": -53.80000000000045,
+    "steps": 200,
+    "collisions": 10,
+    "nodes": 42,
+    "edges": 210,
+    "goal_reached": false
+  },
+  {
+    "episode": 4,
+    "reward": -13.95999999999999,
+    "steps": 200,
+    "collisions": 2,
+    "nodes": 43,
+    "edges": 289,
+    "goal_reached": false
+  },
+  {
+    "episode": 5,
+    "reward": -33.87999999999995,
+    "steps": 200,
+    "collisions": 6,
+    "nodes": 45,
+    "edges": 346,
+    "goal_reached": false
+  },
+  {
+    "episode": 6,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 45,
+    "edges": 398,
+    "goal_reached": false
+  },
+  {
+    "episode": 7,
+    "reward": -28.9,
+    "steps": 200,
+    "collisions": 5,
+    "nodes": 46,
+    "edges": 443,
+    "goal_reached": false
+  },
+  {
+    "episode": 8,
+    "reward": -58.78000000000004,
+    "steps": 200,
+    "collisions": 11,
+    "nodes": 46,
+    "edges": 483,
+    "goal_reached": false
+  },
+  {
+    "episode": 9,
+    "reward": -63.76000000000016,
+    "steps": 200,
+    "collisions": 12,
+    "nodes": 48,
+    "edges": 535,
+    "goal_reached": false
+  },
+  {
+    "episode": 10,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 48,
+    "edges": 577,
+    "goal_reached": false
+  },
+  {
+    "episode": 11,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 56,
+    "edges": 634,
+    "goal_reached": false
+  },
+  {
+    "episode": 12,
+    "reward": -48.82000000000008,
+    "steps": 200,
+    "collisions": 9,
+    "nodes": 59,
+    "edges": 665,
+    "goal_reached": false
+  },
+  {
+    "episode": 13,
+    "reward": -138.46000000000015,
+    "steps": 200,
+    "collisions": 27,
+    "nodes": 62,
+    "edges": 648,
+    "goal_reached": false
+  },
+  {
+    "episode": 14,
+    "reward": -48.82000000000051,
+    "steps": 200,
+    "collisions": 9,
+    "nodes": 62,
+    "edges": 668,
+    "goal_reached": false
+  },
+  {
+    "episode": 15,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 62,
+    "edges": 619,
+    "goal_reached": false
+  },
+  {
+    "episode": 16,
+    "reward": -13.959999999999964,
+    "steps": 200,
+    "collisions": 2,
+    "nodes": 62,
+    "edges": 648,
+    "goal_reached": false
+  },
+  {
+    "episode": 17,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 62,
+    "edges": 681,
+    "goal_reached": false
+  },
+  {
+    "episode": 18,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 63,
+    "edges": 695,
+    "goal_reached": false
+  },
+  {
+    "episode": 19,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 63,
+    "edges": 724,
+    "goal_reached": false
+  },
+  {
+    "episode": 20,
+    "reward": -4.000000000000003,
+    "steps": 200,
+    "collisions": 0,
+    "nodes": 63,
+    "edges": 675,
+    "goal_reached": false
+  }
+]
