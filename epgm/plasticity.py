@@ -128,8 +128,23 @@ class TopologicalPlasticity:
                 self.graph.adjacency[key] = []
             self.graph.adjacency[key].append(new_edge)
 
-        # [ZH] 4. 定期执行拓扑整理与冗余修剪 (Pruning)
-        # [EN] 4. Periodic topological maintenance and redundant edge pruning
+        # [ZH] 4. POMDP 状态混叠与多模态转移熵检测 (State Aliasing Check)
+        # [EN] 4. POMDP state aliasing & multimodal transition entropy check
+        is_split = False
+        all_edges_for_key = self.graph.adjacency.get(key, [])
+        if len(all_edges_for_key) >= 2:
+            # 计算目标转移分布的信息熵 H = -sum(p * log(p))
+            # Compute empirical transition entropy H = -sum(p * log(p))
+            total_counts = sum(e.observation_count for e in all_edges_for_key)
+            if total_counts >= 15:
+                probs = [e.observation_count / total_counts for e in all_edges_for_key]
+                entropy = -sum(p * np.log2(p + 1e-9) for p in probs)
+                # 若转移熵超过 0.95 (接近完全不确定且发生激烈混叠)
+                if entropy > 0.95:
+                    is_split = self._handle_node_split(source_event, step_index)
+
+        # [ZH] 5. 定期执行拓扑整理与冗余修剪 (Pruning)
+        # [EN] 5. Periodic topological maintenance and redundant edge pruning
         pruned_this_step = 0
         if step_index % 500 == 0 and step_index > 0:
             pruned_this_step = self.prune_stale_edges(step_index)
@@ -137,11 +152,26 @@ class TopologicalPlasticity:
         return {
             "is_hit": is_hit,
             "is_bud": is_bud,
+            "is_split": is_split,
             "surprise_magnitude": surprise_magnitude,
             "pruned_edges": pruned_this_step,
             "total_nodes": len(self.graph.nodes),
             "total_edges": sum(len(el) for el in self.graph.adjacency.values()),
         }
+
+    def _handle_node_split(self, event_id: int, step_index: int) -> bool:
+        """
+        [ZH] 执行节点分裂，消除感知混叠并引入高阶上下文。
+        [EN] Execute node splitting to resolve perceptual aliasing and introduce context.
+        """
+        if event_id not in self.graph.nodes:
+            return False
+        node = self.graph.nodes[event_id]
+        if node.context_order >= 2:
+            return False  # 避免阶数无限膨胀 / Prevent infinite context order
+
+        node.context_order += 1
+        return True
 
     def prune_stale_edges(self, current_step: int) -> int:
         """
