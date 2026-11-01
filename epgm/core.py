@@ -229,7 +229,15 @@ class EventPredictiveGraph:
     def import_fragment(self, fragment: Dict[str, Any]) -> Tuple[int, int]:
         """
         [ZH] 融合导入外部图碎片（用于云端融合或先验图下发给机器人）。
-        [EN] Import and fuse external graph fragment (for cloud aggregation or prior model distribution).
+             对于同向因果预测边执行加权平均共轭融合，并针对未探索先验边 (total_cnt == 0)
+             提供严格的零除保护 (Zero-Division Guard)。
+        [EN] Import and fuse external graph fragment (for cloud aggregation or prior distribution).
+             Executes sample-weighted conjugate aggregation for co-directional causal edges,
+             with strict zero-division protection when merging unvisited edges (total_cnt == 0).
+
+        数学公式 / Mathematical Formulation:
+            R* = (R_old * N_old + R_new * N_new) / (N_old + N_new),  if (N_old + N_new) > 0
+            R* = R_new if R_new != 0.0 else R_old,                  if (N_old + N_new) == 0
 
         Returns:
             Tuple[int, int]: (新增/更新节点数, 新增/更新边数) / (nodes_updated, edges_updated)
@@ -263,12 +271,15 @@ class EventPredictiveGraph:
             found = False
             for edge in self.adjacency[key]:
                 if edge.target_event == t:
-                    # [ZH] 加权平均融合回报与频次
-                    # [EN] Weighted average fusion of reward and counts
-                    total_cnt = edge.observation_count + cnt
-                    edge.expected_reward = (
-                        (edge.expected_reward * edge.observation_count + r * cnt) / total_cnt
-                    )
+                    # [ZH] 加权平均融合回报与频次，严格防止 total_cnt == 0 时的除零异常
+                    # [EN] Weighted average fusion of reward and counts, guarding against division-by-zero when total_cnt == 0
+                    total_cnt = max(0, edge.observation_count) + max(0, cnt)
+                    if total_cnt > 0:
+                        edge.expected_reward = float(
+                            (edge.expected_reward * edge.observation_count + r * cnt) / total_cnt
+                        )
+                    else:
+                        edge.expected_reward = float(r if r != 0.0 else edge.expected_reward)
                     edge.observation_count = total_cnt
                     edge.confidence = min(1.0, edge.confidence + 0.1)
                     edge.uncertainty = max(0.01, edge.uncertainty * 0.9)

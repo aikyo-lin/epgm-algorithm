@@ -186,41 +186,84 @@ class GraphPlanner:
 
     def _evaluate_action_branch(self, event_id: int, action: int, depth: int) -> float:
         """
-        [ZH] 递归展开图预测计算分支期望值。
-        [EN] Recursively unroll graph predictions to compute branch expected value.
+        [ZH] 递归展开因果转移图，利用贝尔曼期望算子计算条件动作分支的预期累计折现价值。
+             摒弃单边贪心 argmax 观测频次，采用全概率期望累加所有转移支路，避免危险分支遮蔽。
+        [EN] Recursively unroll causal graph predictions via Bellman expectation operator.
+             Replaces greedy argmax observation count with exact expectation over all branching
+             outcomes to prevent masking low-frequency collision hazards.
+
+        数学公式 / Mathematical Formulation:
+            Q(s, a) = sum_{e in Preds} P(e) * [ R(s, a, e.target) + beta * U(e) + gamma * max_{a'} Q(e.target, a') ]
+
+            其中 / where:
+            - 条件转移概率 / Transition probability:
+              P(e) = e.probability (若已归一化 / if normalized)
+                     或 / or e.observation_count / sum_{e'} e'.observation_count
+            - 好奇心奖励 / Curiosity bonus:
+              U(e) = curiosity_weight / sqrt(e.observation_count + 1)
+            - 碰撞惩罚 / Collision penalty:
+              若 e.target == 0，即时回报减去 10.0 / Immediate reward penalty -10.0 if e.target == 0
+
+        Args:
+            event_id (int): 源事件状态 ID / Source event state ID s
+            action (int): 候选动作索引 / Candidate action index a
+            depth (int): 当前搜索树展开深度 / Current lookahead search depth
+
+        Returns:
+            float: 该动作分支的前向展开预期累计价值 Q(s, a) / Branch expected cumulative value
         """
         predictions = self.graph.get_predictions(event_id, action)
 
-        # [ZH] 1. 如果该动作从未在当前事件发生过 (未探索边)：赋予极高好奇心奖励鼓励建图
-        # [EN] 1. If this action has never been executed at current event (unexplored edge): grant high curiosity bonus
+        # [ZH] 1. 若该动作从未在当前事件发生过 (未探索边)：赋予先验探索好奇心势能
+        # [EN] 1. Unexplored branch: grant prior curiosity bonus to encourage exploration
         if not predictions:
-            return self.curiosity_weight * 2.0
+            return float(self.curiosity_weight * 2.0)
 
-        # [ZH] 选取主导转移边 (Dominant transition edge)
-        best_edge = max(predictions, key=lambda e: e.observation_count)
+        # [ZH] 2. 计算各转移分支条件概率 P(s' | s, a)
+        # [EN] 2. Determine conditional transition probability distribution
+        has_valid_probabilities = all(
+            hasattr(e, "probability") and e.probability is not None for e in predictions
+        )
+        use_edge_prob = False
+        if has_valid_probabilities:
+            prob_sum = sum(float(e.probability) for e in predictions)
+            if abs(prob_sum - 1.0) < 1e-3:
+                use_edge_prob = True
 
-        # [ZH] 2. 任务即时预期回报 / Immediate expected task reward
-        r_task = best_edge.expected_reward
+        total_obs = sum(max(0, e.observation_count) for e in predictions)
+        k_outcomes = len(predictions)
 
-        # [ZH] 若预测后继为碰撞事件 (event_id == 0)，给予严厉惩罚规避危险
-        # [EN] If predicted target is collision event (event_id == 0), impose severe penalty
-        if best_edge.target_event == 0:
-            r_task -= 10.0
+        # [ZH] 3. 贝尔曼全期望累加 / Bellman expectation summation
+        expected_branch_value = 0.0
 
-        # [ZH] 3. 边的不确定性好奇心奖励 / Edge uncertainty curiosity bonus
-        # 观测越少，好奇心价值越高: U = 1 / sqrt(N + 1)
-        r_curiosity = self.curiosity_weight / np.sqrt(best_edge.observation_count + 1)
+        for edge in predictions:
+            if use_edge_prob:
+                prob = float(edge.probability)
+            elif total_obs > 0:
+                prob = float(max(0, edge.observation_count)) / float(total_obs)
+            else:
+                prob = 1.0 / float(k_outcomes)
 
-        total_value = r_task + r_curiosity
+            # 即时任务回报与碰撞惩罚
+            r_task = float(edge.expected_reward)
+            if edge.target_event == 0:
+                r_task -= 10.0  # 物理碰撞硬安全惩罚
 
-        # [ZH] 4. 前向递归展望计算贝尔曼未来价值 / Forward lookahead computation
-        if depth < self.planning_depth:
-            next_event = best_edge.target_event
-            future_vals = []
-            for next_a in range(self.action_dim):
-                next_val = self._evaluate_action_branch(next_event, next_a, depth + 1)
-                future_vals.append(next_val)
-            if future_vals:
-                total_value += self.gamma * max(future_vals)
+            # 好奇心探索不确定性奖励
+            r_curiosity = float(self.curiosity_weight / np.sqrt(max(0, edge.observation_count) + 1))
+            edge_immediate_val = r_task + r_curiosity
 
-        return float(total_value)
+            # [ZH] 4. 前向递归展望未来最优状态价值 V*(s') / Forward lookahead future value
+            future_val = 0.0
+            if depth < self.planning_depth:
+                next_event = edge.target_event
+                future_vals = [
+                    self._evaluate_action_branch(next_event, next_a, depth + 1)
+                    for next_a in range(self.action_dim)
+                ]
+                if future_vals:
+                    future_val = self.gamma * max(future_vals)
+
+            expected_branch_value += prob * (edge_immediate_val + future_val)
+
+        return float(expected_branch_value)

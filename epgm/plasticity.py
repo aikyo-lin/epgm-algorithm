@@ -60,7 +60,19 @@ class TopologicalPlasticity:
     ) -> Dict[str, Any]:
         """
         [ZH] 执行单步局部因果可塑性更新。
+             涵盖突触增强 (LTP)、因果生枝 (Budding)、冗余修剪 (LTD) 与
+             基于尺度不变归一化香农熵的状态混叠检测与节点分裂。
         [EN] Execute single-step local causal plasticity update.
+             Covers synaptic potentiation (LTP), causal budding, redundant edge pruning (LTD),
+             and POMDP state aliasing detection via scale-invariant normalized Shannon entropy.
+
+        数学公式 / Mathematical Formulation:
+            1. LTP 回报滤波更新 / Reward Filtering:
+               R <- R + alpha * (r - R)
+            2. 无偏非负香农熵 / Non-negative Shannon Entropy:
+               H(X) = - sum_{p_i > 0} p_i * log2(p_i)
+            3. 尺度无关归一化相对熵 / Scale-invariant Normalized Relative Entropy:
+               H_norm = H(X) / log2(K) in [0, 1],  for K >= 2
 
         Args:
             source_event (int): 执行动作前的事件 ID / Event ID before action execution.
@@ -128,19 +140,26 @@ class TopologicalPlasticity:
                 self.graph.adjacency[key] = []
             self.graph.adjacency[key].append(new_edge)
 
-        # [ZH] 4. POMDP 状态混叠与多模态转移熵检测 (State Aliasing Check)
-        # [EN] 4. POMDP state aliasing & multimodal transition entropy check
+        # [ZH] 4. POMDP 状态混叠与多模态转移相对熵检测 (State Aliasing Check via Normalized Entropy)
+        # [EN] 4. POMDP state aliasing detection via scale-invariant normalized Shannon entropy
         is_split = False
         all_edges_for_key = self.graph.adjacency.get(key, [])
-        if len(all_edges_for_key) >= 2:
-            # 计算目标转移分布的信息熵 H = -sum(p * log(p))
-            # Compute empirical transition entropy H = -sum(p * log(p))
-            total_counts = sum(e.observation_count for e in all_edges_for_key)
+        k_outcomes = len(all_edges_for_key)
+        if k_outcomes >= 2:
+            # [ZH] 计算经验分布的香农熵与无量纲归一化相对熵:
+            #      H(X) = -sum_{p > 0} p * log2(p)
+            #      H_norm = H(X) / log2(K) in [0, 1]
+            # [EN] Compute empirical Shannon entropy and scale-invariant normalized entropy:
+            #      H(X) = -sum_{p > 0} p * log2(p), H_norm = H(X) / log2(K) in [0, 1]
+            total_counts = sum(max(0, e.observation_count) for e in all_edges_for_key)
             if total_counts >= 15:
-                probs = [e.observation_count / total_counts for e in all_edges_for_key]
-                entropy = -sum(p * np.log2(p + 1e-9) for p in probs)
-                # 若转移熵超过 0.95 (接近完全不确定且发生激烈混叠)
-                if entropy > 0.95:
+                probs = [max(0, e.observation_count) / total_counts for e in all_edges_for_key]
+                entropy = -sum((p * np.log2(p)) if p > 0.0 else 0.0 for p in probs)
+                max_entropy = np.log2(float(k_outcomes))
+                norm_entropy = (entropy / max_entropy) if max_entropy > 0.0 else 0.0
+
+                # 若归一化相对熵超过 0.95 (极其接近理论最大均匀分布，表明存在剧烈多模态感知混叠)
+                if norm_entropy > 0.95:
                     is_split = self._handle_node_split(source_event, step_index)
 
         # [ZH] 5. 定期执行拓扑整理与冗余修剪 (Pruning)
